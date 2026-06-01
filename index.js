@@ -8,13 +8,19 @@ const AOA_VENDOR_ID = 0x18D1;
 const MOTOROLA_VID = 0x22b8;
 const AOA_PRODUCT_IDS = [0x2D00, 0x2D01];
 const ACCESSORY_STRINGS = [
-  { index: 0, value: 'JoyTouch' },
-  { index: 1, value: 'GamepadAccessory' },
-  { index: 2, value: '1.0' },
-];
+   { index: 0, value: 'JoyTouch' },
+    { index: 1, value: 'GamepadAccessory' },
+     { index: 2, value: 'AOA Controller' },      // Descriptionを追加 
+     { index: 3, value: '1.0' }, 
+     { index: 4, value: 'https://example.com' }, // URIを追加 
+     { index: 5, value: '00000000' }, // Serialを追加 
+    ];
+
 
 const POLL_INTERVAL_MS = 1000;
-const RECONNECT_TIMEOUT_MS = 20000;
+const RECONNECT_TIMEOUT_MS = 20000; // 既定の再認識待機時間（ms）
+const HANDSHAKE_RETRIES = 3; // AOA 開始リクエストのリトライ回数
+const HANDSHAKE_WAIT_MS = 30000; // 各ハンドシェイク後に待機する最大時間（ms）
 const AXIS_DEADZONE = 20;
 
 let pressedKeys = new Set();
@@ -156,6 +162,15 @@ async function waitForAccessoryDevice(timeoutMs = RECONNECT_TIMEOUT_MS) {
   throw new Error('AOA モードのデバイスを待機中にタイムアウトしました。');
 }
 
+function findDeviceByVidPid(vid, pid) {
+  return usb
+    .getDeviceList()
+    .find((deviceItem) => {
+      const { idVendor, idProduct } = deviceItem.deviceDescriptor;
+      return idVendor === vid && idProduct === pid;
+    });
+}
+
 function toggleKey(key, active) {
   if (!key) return;
   const isPressed = pressedKeys.has(key);
@@ -271,27 +286,102 @@ function cleanupAndExit() {
 async function connectAccessoryDevice(device) {
   activeDevice = device;
   try {
-    device.open();
+    // 再認識直後は少し待つ（OS側の準備時間を確保）
+    await delay(500);
+
+    const maxOpenAttempts = 6;
+    const openDelayMs = 500;
+    let openError = null;
+    for (let attempt = 1; attempt <= maxOpenAttempts; attempt += 1) {
+      console.log(`▶ device.open() を実行します... (attempt ${attempt}/${maxOpenAttempts})`);
+      try {
+        device.open();
+        console.log('✅ device.open() 成功');
+        openError = null;
+        break;
+      } catch (err) {
+        openError = err;
+        console.warn(`⚠️ device.open() に失敗しました: ${err.message || err}`);
+        if (attempt < maxOpenAttempts) {
+          console.log(`  ${openDelayMs}ms 待機して再試行します...`);
+          await delay(openDelayMs);
+        }
+      }
+    }
+    if (openError) {
+      throw openError;
+    }
+
+    console.log(`  接続デバイス: VID=0x${device.deviceDescriptor.idVendor.toString(16).padStart(4, '0')}, PID=0x${device.deviceDescriptor.idProduct.toString(16).padStart(4, '0')}`);
+    console.log(`  設定数: ${device.deviceDescriptor.bNumConfigurations}`);
+
+    // USB構成を明示的にセットする
+    // これにより Android 側の 'configured' が true になり、ポップアップが出るトリガーになります
+    try {
+      console.log('▶ device.setConfiguration(1) を実行します...');
+      await new Promise((resolve, reject) => {
+        device.setConfiguration(1, (err) => {
+          if (err) reject(err);
+          else resolve();
+        });
+      });
+      console.log('✅ USB構成（Configuration 1）をセットしました');
+    } catch (err) {
+      console.warn('⚠️ USB構成セット中にエラー（無視して続行します）:', err.message || err);
+    }
+
+    if (!device.interfaces || device.interfaces.length === 0) {
+      throw new Error('デバイスのインターフェースが見つかりません。device.interfaces が空です。');
+    }
+
+    console.log(`  インターフェース数: ${device.interfaces.length}`);
     const iface = device.interfaces[0];
     activeInterface = iface;
 
-    if (iface.isKernelDriverActive && iface.isKernelDriverActive()) {
-      try {
-        iface.detachKernelDriver();
-      } catch (err) {
-        console.warn('カーネルドライバの切り離しに失敗しました:', err.message || err);
+    console.log(`▶ interface #${iface.descriptor.bInterfaceNumber} を取得します`);
+    // isKernelDriverActive は Windows ではサポートされないことがあるため安全に呼び出す
+    try {
+      if (typeof iface.isKernelDriverActive === 'function') {
+        let kernelActive = false;
+        try {
+          kernelActive = iface.isKernelDriverActive();
+        } catch (e) {
+          console.log('  isKernelDriverActive() はサポートされていません。カーネルドライバチェックをスキップします。', e.message || e);
+        }
+        if (kernelActive) {
+          try {
+            console.log('  カーネルドライバを切り離します...');
+            iface.detachKernelDriver();
+            console.log('✅ カーネルドライバ切り離し成功');
+          } catch (err) {
+            console.warn('⚠️ カーネルドライバの切り離しに失敗しました:', err.message || err);
+          }
+        }
       }
+    } catch (e) {
+      console.warn('⚠️ カーネルドライバチェック中に例外が発生しました:', e.message || e);
     }
 
-    iface.claim();
+    console.log('▶ iface.claim() を実行します...');
+    try {
+      iface.claim();
+      console.log('✅ インターフェースを占有（Claim）しました');
+    } catch (err) {
+      console.error('❌ iface.claim() でエラーが発生しました:', err.message || err);
+      if (err && err.stack) console.error(err.stack);
+      throw err;
+    }
 
     const endpoint = iface.endpoints.find((ep) => ep.direction === 'in');
+    console.log(`  エンドポイント数: ${iface.endpoints.length}`);
     if (!endpoint) {
       throw new Error('入力エンドポイントが見つかりません。');
     }
     activeEndpoint = endpoint;
+    console.log(`✅ 受信エンドポイントが選択されました: address=0x${endpoint.descriptor.bEndpointAddress.toString(16)}`);
     startInputLoop(endpoint);
   } catch (error) {
+    console.error('❌ 接続プロセス中にエラーが発生しました:', error.message || error);
     closeDevice(device);
     throw error;
   }
@@ -304,10 +394,44 @@ async function main() {
   process.on('SIGTERM', cleanupAndExit);
 
   try {
-    await performAccessoryHandshake();
-    const aoaDevice = await waitForAccessoryDevice();
-    console.log(`AOA デバイス接続完了: VID=0x${aoaDevice.deviceDescriptor.idVendor.toString(16)}, PID=0x${aoaDevice.deviceDescriptor.idProduct.toString(16)}`);
-    await connectAccessoryDevice(aoaDevice);
+    let aoaDevice = null;
+    for (let attempt = 1; attempt <= HANDSHAKE_RETRIES; attempt += 1) {
+      console.log(`
+--- ハンドシェイク試行 ${attempt}/${HANDSHAKE_RETRIES} ---`);
+      try {
+        await performAccessoryHandshake();
+      } catch (err) {
+        console.warn('ハンドシェイク送信中に警告が発生しました（続行します）:', err.message || err);
+      }
+
+      try {
+        aoaDevice = await waitForAccessoryDevice(HANDSHAKE_WAIT_MS);
+        console.log(`AOA デバイス接続完了: VID=0x${aoaDevice.deviceDescriptor.idVendor.toString(16)}, PID=0x${aoaDevice.deviceDescriptor.idProduct.toString(16)}`);
+        break;
+      } catch (err) {
+        console.warn(`ハンドシェイク後の再認識待機がタイムアウトしました（${attempt}回目）。`);
+        if (attempt < HANDSHAKE_RETRIES) {
+          console.log('数秒待ってから再試行します...');
+          await delay(2000);
+          continue;
+        }
+        // 最終試行でも失敗
+        throw new Error('AOA モードへの切り替えがタイムアウトしました。Zadig/UsbDk のドライバ設定や adb を確認してください（例: adb kill-server）。');
+      }
+    }
+
+    if (!aoaDevice) {
+      throw new Error('AOA デバイスが見つかりませんでした。');
+    }
+
+    // 少し待ってからデバイスを再取得
+    await delay(2000);
+    const freshDevice = findDeviceByVidPid(aoaDevice.deviceDescriptor.idVendor, aoaDevice.deviceDescriptor.idProduct);
+    if (!freshDevice) {
+      throw new Error('再認識後に AOA デバイスが取得できませんでした。');
+    }
+    console.log('🔄 再取得した AOA デバイスで接続処理を続行します');
+    await connectAccessoryDevice(freshDevice);
   } catch (error) {
     console.error('エラーが発生しました:', error.message || error);
     process.exit(1);

@@ -1,3 +1,9 @@
+const path = require('path');
+
+if (process.pkg) {
+  process.env.NODE_USB_PATH = path.join(path.dirname(process.execPath), 'usb');
+}
+
 const usb = require('usb');
 const robot = require('robotjs');
 

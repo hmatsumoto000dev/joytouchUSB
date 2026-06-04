@@ -1,9 +1,28 @@
 {
+  "name": "joytouchUSB",
+  "version": "1.0.0",
+  "description": "AOA キーボード/マウス変換プログラム",
+  "bin": "index.js",
   "scripts": {
-    "start": "node index.js"
+    "start": "node index.js",
+    "prepare-build": "node scripts/prep-build.js",
+    "build": "npm run prepare-build && pkg --targets node18-win-x64 index.js -o dist/joytouchUSB.exe"
   },
   "dependencies": {
     "robotjs": "^0.7.1",
     "usb": "^2.17.0"
+  },
+  "devDependencies": {
+    "pkg": "^5.8.1"
+  },
+  "pkg": {
+    "targets": ["node18-win-x64"],
+    "outputPath": "dist",
+    "assets": [
+      "node_modules/usb/prebuilds/**/*",
+      "scripts/prep-build.js"
+    ]
   }
 }
+
+

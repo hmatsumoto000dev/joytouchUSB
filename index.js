@@ -1,7 +1,24 @@
 const path = require('path');
+const fs = require('fs');
+const readline = require('readline');
 
 if (process.pkg) {
-  process.env.NODE_USB_PATH = path.join(path.dirname(process.execPath), 'usb');
+  const usbPath = path.join(path.dirname(process.execPath), 'usb');
+  
+  // USB フォルダと node.napi.node ファイルが存在するか確認
+  const nodePath = path.join(usbPath, 'prebuilds', 'win32-x64', 'node.napi.node');
+  if (!fs.existsSync(nodePath)) {
+    console.error('❌ エラー: USB ネイティブドライバが見つかりません');
+    console.error(`   期待される場所: ${nodePath}`);
+    console.error('\n📦 配布時の確認:');
+    console.error(`  1. joytouchUSB.exe と同じフォルダに usb/ ディレクトリがあるか確認してください`);
+    console.error(`  2. 以下のファイルが存在するか確認してください:`);
+    console.error(`     ${usbPath}\\prebuilds\\win32-x64\\node.napi.node`);
+    console.error('\n詳細は README_DIST.md を参照してください');
+    process.exit(1);
+  }
+  
+  process.env.NODE_USB_PATH = usbPath;
 }
 
 const usb = require('usb');
@@ -11,7 +28,6 @@ const robot = require('robotjs');
 usb.useUsbDkBackend();
 
 const AOA_VENDOR_ID = 0x18D1;
-const MOTOROLA_VID = 0x22b8;
 const AOA_PRODUCT_IDS = [0x2D00, 0x2D01];
 const ACCESSORY_STRINGS = [
    { index: 0, value: 'JoyTouch' },
@@ -22,6 +38,19 @@ const ACCESSORY_STRINGS = [
      { index: 5, value: '00000000' }, // Serialを追加 
     ];
 
+// USB VID to Vendor Name Mapping
+const VENDOR_NAMES = {
+  0x22b8: 'Motorola',
+  0x18D1: 'Google',
+  0x0BB4: 'HTC',
+  0x04E8: 'Samsung',
+  0x05AC: 'Apple',
+  0x0E8D: 'MediaTek',
+  0x1949: 'Lab126 (Amazon)',
+  0x0955: 'NVIDIA',
+  0x0403: 'FTDI',
+  0x10C4: 'Silicon Labs',
+};
 
 const POLL_INTERVAL_MS = 1000;
 const RECONNECT_TIMEOUT_MS = 20000; // 既定の再認識待機時間（ms）
@@ -33,6 +62,70 @@ let pressedKeys = new Set();
 let activeEndpoint = null;
 let activeInterface = null;
 let activeDevice = null;
+
+// Vendor ID から製造元名を取得
+function getVendorName(vid) {
+  return VENDOR_NAMES[vid] || `Unknown (0x${vid.toString(16).toUpperCase()})`;
+}
+
+// ユーザーに対話的にデバイスを選択させる
+function askQuestion(question) {
+  return new Promise((resolve) => {
+    const rl = readline.createInterface({
+      input: process.stdin,
+      output: process.stdout,
+    });
+    rl.question(question, (answer) => {
+      rl.close();
+      resolve(answer);
+    });
+  });
+}
+
+async function selectAndroidDevice() {
+  // すべての USB デバイスを取得
+  const allDevices = usb.getDeviceList();
+  
+  // Android 互換デバイスをフィルター（Motorola, Google, HTC, Samsung など）
+  const androidDevices = allDevices.filter((device) => {
+    const { idVendor } = device.deviceDescriptor;
+    // AOA をサポートしそうなベンダーか、または AOA モード機
+    const isKnownAndroidVendor = Object.keys(VENDOR_NAMES).map(k => parseInt(k, 10)).includes(idVendor);
+    const isAoaMode = idVendor === AOA_VENDOR_ID;
+    return isKnownAndroidVendor || isAoaMode;
+  });
+
+  if (androidDevices.length === 0) {
+    throw new Error('Android/AOA 互換デバイスが見つかりませんでした。USB デバイスを接続してください。');
+  }
+
+  if (androidDevices.length === 1) {
+    // デバイスが 1 個だけならそれを選択
+    return androidDevices[0];
+  }
+
+  // 複数デバイスの場合、ユーザーに選択させる
+  console.log('\n複数の USB デバイスが見つかりました:\n');
+  for (let i = 0; i < androidDevices.length; i++) {
+    const dev = androidDevices[i];
+    const vendor = getVendorName(dev.deviceDescriptor.idVendor);
+    const pid = dev.deviceDescriptor.idProduct.toString(16).padStart(4, '0');
+    const vid = dev.deviceDescriptor.idVendor.toString(16).padStart(4, '0');
+    console.log(`  [${i + 1}] ${vendor} (VID=0x${vid}, PID=0x${pid})`);
+  }
+
+  while (true) {
+    const answer = await askQuestion('\n接続するデバイスを選択 (1-' + androidDevices.length + '): ');
+    const index = parseInt(answer, 10) - 1;
+    if (index >= 0 && index < androidDevices.length) {
+      const selected = androidDevices[index];
+      const vendor = getVendorName(selected.deviceDescriptor.idVendor);
+      console.log(`\n✓ 選択: ${vendor} (VID=0x${selected.deviceDescriptor.idVendor.toString(16).padStart(4, '0')})\n`);
+      return selected;
+    }
+    console.log('無効な選択です。もう一度入力してください。');
+  }
+}
 
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -82,22 +175,11 @@ function closeDevice(device) {
   }
 }
 
-async function performAccessoryHandshake() {
-  // Motorola デバイスまたはすでに AOA モードのデバイスを検索
-  const candidates = usb
-    .getDeviceList()
-    .filter((device) => {
-      const { idVendor, idProduct } = device.deviceDescriptor;
-      // Motorola (0x22b8) またはすでに AOA プレ状態のデバイスを探す
-      return idVendor === MOTOROLA_VID || (idVendor === AOA_VENDOR_ID && !AOA_PRODUCT_IDS.includes(idProduct));
-    });
+async function performAccessoryHandshake(device) {
+  // 引数で指定されたデバイスでハンドシェイクを実行
+  const vendor = getVendorName(device.deviceDescriptor.idVendor);
+  console.log(`接続先デバイスを選択: ${vendor} (VID=0x${device.deviceDescriptor.idVendor.toString(16).padStart(4, '0')}, PID=0x${device.deviceDescriptor.idProduct.toString(16).padStart(4, '0')})`);
 
-  if (candidates.length === 0) {
-    throw new Error('Android デバイスが見つかりませんでした。まず Android デバイスを接続してください。');
-  }
-
-  const device = candidates[0];
-  console.log(`接続先デバイスを選択: VID=0x${device.deviceDescriptor.idVendor.toString(16).padStart(4, '0')}, PID=0x${device.deviceDescriptor.idProduct.toString(16).padStart(4, '0')}`);
 
   // デバイスをオープン
   try {
@@ -394,18 +476,21 @@ async function connectAccessoryDevice(device) {
 }
 
 async function main() {
-  console.log('AOA キーボード/マウス変換プログラムを開始します');
+  console.log('AOA キーボード/マウス変換プログラムを開始します\n');
 
   process.on('SIGINT', cleanupAndExit);
   process.on('SIGTERM', cleanupAndExit);
 
   try {
+    // ユーザーに接続するデバイスを選択させる
+    const selectedDevice = await selectAndroidDevice();
+    
     let aoaDevice = null;
     for (let attempt = 1; attempt <= HANDSHAKE_RETRIES; attempt += 1) {
       console.log(`
 --- ハンドシェイク試行 ${attempt}/${HANDSHAKE_RETRIES} ---`);
       try {
-        await performAccessoryHandshake();
+        await performAccessoryHandshake(selectedDevice);
       } catch (err) {
         console.warn('ハンドシェイク送信中に警告が発生しました（続行します）:', err.message || err);
       }

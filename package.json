@@ -6,7 +6,8 @@
   "scripts": {
     "start": "node index.js",
     "prepare-build": "node scripts/prep-build.js",
-    "build": "npm run prepare-build && pkg --targets node18-win-x64 index.js -o dist/joytouchUSB.exe"
+    "build": "npm run prepare-build && pkg --targets node18-win-x64 index.js -o dist/joytouchUSB.exe",
+    "package": "npm run build && node scripts/package-release.js"
   },
   "dependencies": {
     "robotjs": "^0.7.1",

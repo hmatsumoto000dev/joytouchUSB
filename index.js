@@ -272,11 +272,15 @@ function toggleKey(key, active) {
 }
 
 function updateButtons(buttonFlags) {
-  // ボタンビットごとの割り当て例
-  toggleKey('z', Boolean(buttonFlags & 0x01)); // bit0: 攻撃ボタン
-  toggleKey('x', Boolean(buttonFlags & 0x02)); // bit1: ジャンプボタン
-  toggleKey('c', Boolean(buttonFlags & 0x04)); // bit2: 特殊ボタン
-  toggleKey('v', Boolean(buttonFlags & 0x08)); // bit3: アイテムボタン
+  // ボタンビットごとの割り当て
+  toggleKey('j', Boolean(buttonFlags & 0x01)); // bit0
+  toggleKey('k', Boolean(buttonFlags & 0x02)); // bit1
+  toggleKey('l', Boolean(buttonFlags & 0x04)); // bit2
+  toggleKey(';', Boolean(buttonFlags & 0x08)); // bit3
+  toggleKey('u', Boolean(buttonFlags & 0x10)); // bit4
+  toggleKey('i', Boolean(buttonFlags & 0x20)); // bit5
+  toggleKey('o', Boolean(buttonFlags & 0x40)); // bit6
+  toggleKey('p', Boolean(buttonFlags & 0x80)); // bit7
 }
 
 function updateAxes(x, y) {

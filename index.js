@@ -292,36 +292,66 @@ function updateAxes(x, y) {
   // マウス移動に変換したい場合はここに追加できます。
   // 例: robot.moveMouseRelative(x, y);
 }
+let lastMouseButtons = 0;
+
 function processReport(report) {
-  // 受信したレポートを詳細にログ出力して解析する（日本語コメント）
-  const ts = new Date().toISOString();
+  try {
+    // 受信したレポートを詳細にログ出力して解析する（日本語コメント）
+    const ts = new Date().toISOString();
 
-  // 生データを 16 進で表示
-  const rawHex = Array.from(report || []).map((b) => b.toString(16).padStart(2, '0')).join(' ');
-  console.log(`[${ts}] 受信バッファ (${report.length} bytes): ${rawHex}`);
+    if (report.length < 4) {
+      console.warn(`[${ts}] 不正なレポート受信（長さ不足）:`, report);
+      return;
+    }
 
-  if (report.length < 3) {
-    console.warn(`[${ts}] 不正なレポート受信:`, report);
-    return;
+    // レポートのパース
+    const mode = report.readUInt8(0);
+    const buttons = report.readUInt8(1);
+    const x = report.readInt8(2);
+    const y = report.readInt8(3);
+
+    if (mode === 0x00) {
+      // Gamepad Mode
+      console.log(`[${ts}] Gamepad Mode: buttons=0x${buttons.toString(16)}, x=${x}, y=${y}`);
+      updateButtons(buttons);
+      updateAxes(x, y);
+    } else if (mode === 0x01) {
+      // Touchpad Mode
+      console.log(`[${ts}] Touchpad Mode: buttons=0x${buttons.toString(16)}, dx=${x}, dy=${y}`);
+
+      // マウス移動
+      if (x !== 0 || y !== 0) {
+        try {
+          const mouse = robot.getMousePos();
+          robot.moveMouse(mouse.x + x, mouse.y + y);
+        } catch (err) {
+          console.error('マウス移動エラー:', err.message);
+        }
+      }
+
+      // マウスボタン (状態が変化したときだけ実行)
+      if (buttons !== lastMouseButtons) {
+        try {
+          const isLeftDown = Boolean(buttons & 0x01);
+          const isRightDown = Boolean(buttons & 0x02);
+          const wasLeftDown = Boolean(lastMouseButtons & 0x01);
+          const wasRightDown = Boolean(lastMouseButtons & 0x02);
+
+          if (isLeftDown !== wasLeftDown) {
+            robot.mouseToggle(isLeftDown ? 'down' : 'up', 'left');
+          }
+          if (isRightDown !== wasRightDown) {
+            robot.mouseToggle(isRightDown ? 'down' : 'up', 'right');
+          }
+        } catch (err) {
+          console.error('マウスボタン操作エラー:', err.message);
+        }
+        lastMouseButtons = buttons;
+      }
+    }
+  } catch (err) {
+    console.error('レポート解析中に致命的なエラーが発生しました:', err);
   }
-
-  // レポートのパース
-  const buttonFlags = report.readUInt8(0);
-  const xAxis = report.readInt8(1);
-  const yAxis = report.readInt8(2);
-
-  // 解析結果をログ出力
-  console.log(`[${ts}] 解析結果: buttons=0x${buttonFlags.toString(16)}, x=${xAxis}, y=${yAxis}`);
-
-  // 詳細ビット表示（VERBOSE_LOG=1 で有効）
-  const VERBOSE_LOG = process.env.VERBOSE_LOG === '1' || process.env.DEBUG === '1';
-  if (VERBOSE_LOG) {
-    console.log(`[${ts}] ボタンビット詳細: ${buttonFlags.toString(2).padStart(8, '0')}`);
-  }
-
-  // 実際のキー操作へ伝搬
-  updateButtons(buttonFlags);
-  updateAxes(xAxis, yAxis);
 }
 
 function startInputLoop(endpoint) {

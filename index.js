@@ -50,6 +50,16 @@ const VENDOR_NAMES = {
   0x0955: 'NVIDIA',
   0x0403: 'FTDI',
   0x10C4: 'Silicon Labs',
+  0x0FCE: 'Sony',
+  0x054C: 'Sony Corp',
+  0x04DD: 'Sharp',
+  0x04C5: 'Fujitsu',
+  0x0482: 'Kyocera',
+  0x2717: 'Xiaomi',
+  0x2A70: 'OnePlus',
+  0x12D1: 'Huawei',
+  0x1004: 'LG',
+  0x22D9: 'Oppo',
 };
 
 const POLL_INTERVAL_MS = 1000;
@@ -185,7 +195,12 @@ async function performAccessoryHandshake(device) {
   try {
     device.open();
   } catch (err) {
-    throw new Error(`デバイスオープンエラー: ${err.message || err}`);
+    throw new Error(
+      `デバイスオープンエラー: ${err.message || err}\n` +
+      `   → ヒント: Androidデバイスが「MTP（ファイル転送）」モードになっているため、\n` +
+      `             Windowsにアクセスをブロックされている可能性があります。\n` +
+      `   → Androidの設定でUSBの用途を「データ転送なし（充電のみ）」に変更してから再試行してください。`
+    );
   }
 
   try {

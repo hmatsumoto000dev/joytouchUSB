@@ -288,14 +288,14 @@ function toggleKey(key, active) {
 
 function updateButtons(buttonFlags) {
   // ボタンビットごとの割り当て
-  toggleKey('j', Boolean(buttonFlags & 0x01)); // bit0
-  toggleKey('k', Boolean(buttonFlags & 0x02)); // bit1
-  toggleKey('l', Boolean(buttonFlags & 0x04)); // bit2
-  toggleKey(';', Boolean(buttonFlags & 0x08)); // bit3
-  toggleKey('u', Boolean(buttonFlags & 0x10)); // bit4
-  toggleKey('i', Boolean(buttonFlags & 0x20)); // bit5
-  toggleKey('o', Boolean(buttonFlags & 0x40)); // bit6
-  toggleKey('p', Boolean(buttonFlags & 0x80)); // bit7
+  toggleKey('u', Boolean(buttonFlags & 0x01)); // bit0
+  toggleKey('i', Boolean(buttonFlags & 0x02)); // bit1
+  toggleKey('o', Boolean(buttonFlags & 0x04)); // bit2
+  toggleKey('p', Boolean(buttonFlags & 0x08)); // bit3
+  toggleKey('j', Boolean(buttonFlags & 0x10)); // bit4
+  toggleKey('k', Boolean(buttonFlags & 0x20)); // bit5
+  toggleKey('l', Boolean(buttonFlags & 0x40)); // bit6
+  toggleKey(';', Boolean(buttonFlags & 0x80)); // bit7
 }
 
 function updateAxes(x, y) {
